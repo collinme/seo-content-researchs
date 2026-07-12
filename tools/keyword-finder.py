@@ -3,10 +3,9 @@
 Keyword Finder — SEO keyword discovery.
 Zero external dependencies (stdlib only).
 
-Data sources (tried in order):
-  1. Startpage (Google Search Alliance → real Google results)
-     - Direct IP first, then v2raya SOCKS5 proxy for rotation
-  2. DuckDuckGo via Jina Reader proxy (unlimited fallback)
+Data sources:
+  - DuckDuckGo via Jina Reader proxy (default, stable, unlimited)
+  - Startpage via Google Alliance (opt-in with --google, sometimes captcha)
 
 Usage:
   python3 tools/keyword-finder.py --product "heavy duty tarp" --countries "us,ca,uk"
@@ -113,7 +112,7 @@ def _try_startpage(query: str, use_proxy: bool) -> list:
         print(f"       ✅ {len(results)} results (Google quality)", file=sys.stderr)
         time.sleep(4)
     else:
-        print(f"       ⚠️ No results parsed (Startpage captcha or empty)
+        print("       ⚠️ No results parsed (Startpage captcha or empty)", file=sys.stderr)
 
     return results
 
@@ -220,33 +219,16 @@ def jina_search(query: str) -> list:
     return results
 
 
-def search(query: str) -> list:
-    """
-    Unified search: tries Startpage first (Google quality), falls back to DDG/Jina.
-    Startpage attempts alternate between direct IP and v2raya proxy IP.
-    """
-    # Track Startpage query count per session for delay management
-    if not hasattr(search, "startpage_count"):
-        search.startpage_count = 0
-        search.direct_count = 0
-        search.proxy_count = 0
-
-    # Try Startpage (Google quality) first 3 queries
-    if search.startpage_count < 3:
-        # Alternate: direct → proxy → direct
-        use_proxy = (search.startpage_count % 2 == 1)
-        search.startpage_count += 1
-        if use_proxy:
-            search.proxy_count += 1
-        else:
-            search.direct_count += 1
-
-        sp_results = _try_startpage(query, use_proxy)
-        if sp_results:
-            return sp_results
-
-    # Fallback: DDG via Jina
-    print(f"     → DDG via Jina", file=sys.stderr)
+def search(query: str, use_google: bool = False) -> list:
+    """Search keywords. Default: DDG via Jina (stable, unlimited)."""
+    if use_google:
+        # Try Startpage (Google quality), fallback to Jina
+        for use_proxy in [False, True]:
+            sp_results = _try_startpage(query, use_proxy)
+            if sp_results:
+                return sp_results
+            time.sleep(2)
+    # Default: DDG via Jina (stable)
     return jina_search(query)
 
 
@@ -365,7 +347,7 @@ def get_top_competitors(serp_results: list, max_n: int = 3) -> list:
 
 # ─── Main discovery loop ─────────────────────────────────────────────────────
 
-def discover_keywords(product: str, countries: list) -> list:
+def discover_keywords(product: str, countries: list, use_google: bool = False) -> list:
     """Run keyword discovery across all patterns for given countries."""
     all_keywords: list = []
     seen_queries = set()
@@ -383,7 +365,7 @@ def discover_keywords(product: str, countries: list) -> list:
             seen_queries.add(query_key)
 
             print(f"    {i+1}/{len(SEARCH_PATTERNS)}: `{query}`", file=sys.stderr)
-            serp_results = search(query)
+            serp_results = search(query, use_google=use_google)
 
             competition = estimate_competition_from_serp(serp_results)
             competitors = get_top_competitors(serp_results) if serp_results else []
@@ -457,6 +439,8 @@ if __name__ == "__main__":
     parser.add_argument("--product", required=True, help="Product name")
     parser.add_argument("--countries", default="us", help="Comma-separated country codes")
     parser.add_argument("--output", help="Output file path")
+    parser.add_argument("--google", action="store_true",
+                        help="Try Startpage for Google-quality results (may hit captcha)")
     args = parser.parse_args()
 
     countries = [c.strip() for c in args.countries.split(",") if c.strip()]
@@ -466,10 +450,13 @@ if __name__ == "__main__":
 
     print(f"🔄 Discovering keywords for: {args.product}", file=sys.stderr)
     print(f"   Target markets: {', '.join(countries)}", file=sys.stderr)
-    print(f"   Sources: Startpage (Google) + DDG via Jina (fallback)", file=sys.stderr)
+    if args.google:
+        print(f"   Sources: Startpage (Google) + DDG via Jina (fallback)", file=sys.stderr)
+    else:
+        print(f"   Sources: DuckDuckGo via Jina Reader (stable)", file=sys.stderr)
     print("", file=sys.stderr)
 
-    results = discover_keywords(args.product, countries)
+    results = discover_keywords(args.product, countries, use_google=args.google)
 
     if not results:
         print("\n⚠️  No keywords found.", file=sys.stderr)
