@@ -81,7 +81,7 @@ def extract_top_keywords(kw_path: str, max_n: int = 5) -> list:
 
 
 def build_report(product: str, countries: str, kw_path: str, serp_path: str = None,
-                 brief_path: str = None) -> str:
+                 brief_path: str = None, optimize_path: str = None) -> str:
     """Consolidate all outputs into one markdown report."""
     lines = []
     lines.append(f"# SEO Content Research Report: {product}\n")
@@ -129,6 +129,19 @@ def build_report(product: str, countries: str, kw_path: str, serp_path: str = No
     else:
         lines.append("_No content brief generated._\n")
 
+    lines.append("---\n")
+
+    # Section 4: Google SEO Optimization (optional)
+    if optimize_path and os.path.exists(optimize_path):
+        lines.append("## 四、Google SEO Optimization\n")
+        with open(optimize_path) as f:
+            content = f.read()
+        # Skip the title (already have it in the heading)
+        content_lines = content.split('\n')
+        for line in content_lines[2:]:  # skip first two lines (title + blank)
+            lines.append(line + '\n')
+        lines.append("\n---\n")
+
     return "\n".join(lines)
 
 
@@ -140,6 +153,10 @@ if __name__ == "__main__":
     parser.add_argument("--google", action="store_true",
                         help="Try Google-quality results via Startpage (may hit captcha)")
     parser.add_argument("--brief-keyword", help="Override the keyword for content brief (optional)")
+    parser.add_argument("--optimize", action="store_true",
+                        help="Add Google SEO optimization section to report")
+    parser.add_argument("--write", action="store_true",
+                        help="Generate article writing prompt from research data")
     args = parser.parse_args()
 
     tmpdir = tempfile.mkdtemp(prefix="seo-pipeline-")
@@ -182,12 +199,34 @@ if __name__ == "__main__":
                   "--output", brief_path]
     brief_result = run_step("content-brief-gen.py", brief_args, "Content Brief")
 
-    # ─── Step 4: Build Report ───
+    # ─── Step 4: Google SEO Optimization (optional) ───
+    optimize_path = ""
+    if args.optimize:
+        optimize_path = os.path.join(tmpdir, "optimize.md")
+        opt_args = ["--keyword", brief_kw,
+                     "--country", args.countries.split(",")[0],
+                     "--output", optimize_path]
+        opt_result = run_step("seo-optimizer.py", opt_args, "Google SEO Optimization")
+
+    # ─── Step 5: Article Writing Prompt (optional) ───
+    write_prompt_path = ""
+    if args.write:
+        write_prompt_path = os.path.join(tmpdir, "write-prompt.md")
+        write_args = ["--keyword", brief_kw,
+                      "--country", args.countries.split(",")[0],
+                      "--brief", brief_path,
+                      "--seo", optimize_path if optimize_path else "",
+                      "--serp", serp_path if serp_result else "",
+                      "--output", write_prompt_path]
+        write_result = run_step("article-writer.py", write_args, "Article Writing Prompt")
+
+    # ─── Step 6: Build Report ───
     report = build_report(
         args.product, args.countries,
         kw_path,
         serp_path if serp_result else None,
         brief_path if brief_result else None,
+        optimize_path if args.optimize and os.path.exists(optimize_path) else None,
     )
 
     if args.output:

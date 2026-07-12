@@ -6,7 +6,7 @@ description: >-
   cost), analyzes SERP with real competitor identification, generates EEAT
   content briefs. For factory owners and exporters needing international SEO
   research without paid tools.
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -31,17 +31,7 @@ Designed for Chinese factories/exporters, cross-border sellers, and independent 
 
 ## Data Source Architecture
 
-Search queries use a priority-routed dual-source approach:
-
-```
-1. Try Startpage (direct IP)         → Google-quality results, ~2 queries
-2. Try Startpage (v2raya SOCKS5)     → Different exit IP, +2 more queries
-3. Fallback: DDG via Jina Reader     → Unlimited, no captcha
-```
-
-**Startpage** uses Google Search Alliance → results ARE Google quality. IP rotation between direct and v2raya SOCKS5 proxy (`localhost:20170`) extends captcha-free queries.
-
-**Jina Reader** (`r.jina.ai`) proxies DuckDuckGo Lite on their servers. This bypasses VPS IP bans entirely:
+**Default: DDG via Jina Reader (stable, unlimited).** Search queries route through `r.jina.ai` which proxies DuckDuckGo Lite on their servers, bypassing VPS IP bans entirely:
 
 ```python
 # Jina handles rendering on their infrastructure
@@ -49,7 +39,12 @@ Search queries use a priority-routed dual-source approach:
 r.jina.ai/https://lite.duckduckgo.com/lite/?q=search+query
 ```
 
-**Fallback chain:** Startpage (direct) → Startpage (proxy) → DDG via Jina. If all three fail, the tool reports empty results.
+**Optional Google-quality data:** Pass `--google` to try Startpage (Google Search Alliance) with IP rotation between direct and v2raya SOCKS5 proxy (`localhost:20170`). This extends captcha-free queries to 3-4 before being blocked. When Startpage fails, falls back to DDG via Jina.
+
+```
+Default:  DDG via Jina Reader      → Unlimited, no captcha, stable
+--google: Startpage (direct/proxy)  → Google quality, ~3 queries, then Jina fallback
+```
 
 ## When to Use
 
@@ -215,13 +210,22 @@ All tools are in `tools/` and use Python stdlib only (no pip dependencies).
 | SERP Analyzer | `tools/serp-analyzer.py` | Top-10 SERP analysis, competitor type classification, matrix output |
 | Content Brief Generator | `tools/content-brief-gen.py` | EEAT-aligned content brief generation from keyword + country |
 
-**Usage (clean mode — recommended):**
+**Usage:**
+
+### One-command pipeline (recommended)
 ```bash
-# Discover keywords (clean mode — search queries become keywords)
+python3 pipeline.py \
+  --product "heavy duty tarp" \
+  --countries "us,ca,uk,au" \
+  --output /tmp/full-report.md
+```
+
+### Step-by-step
+```bash
+# Discover keywords (clean mode)
 python3 tools/keyword-finder.py \
   --product "heavy duty tarp" \
   --countries "us,ca,uk,au" \
-  --clean \
   --output /tmp/kw-scan.md
 
 # SERP analysis for a key term
@@ -270,12 +274,19 @@ python3 tools/content-brief-gen.py \
 
 ## One-Shot Recipes
 
+### One-Command Full Report (recommended)
+```bash
+python3 pipeline.py \
+  --product "heavy duty tarp" \
+  --countries "us,ca,uk,au" \
+  --output /home/report.md
+```
+
 ### Quick Keyword Scan (3 min)
 ```bash
 python3 tools/keyword-finder.py \
   --product "heavy duty tarp" \
   --countries "us,ca,au,uk" \
-  --clean \
   --output /tmp/kw-scan.md
 ```
 
@@ -285,7 +296,6 @@ python3 tools/keyword-finder.py \
 python3 tools/keyword-finder.py \
   --product "pvc tarpaulin" \
   --countries "us,ca,uk" \
-  --clean \
   --output /tmp/kw-list.md
 
 # Phase 2: SERP analysis for top keyword
