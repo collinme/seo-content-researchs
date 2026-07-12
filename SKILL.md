@@ -23,11 +23,13 @@ A complete Hermes Agent skill pack for SEO content research targeting internatio
 
 Designed for Chinese factories/exporters, cross-border sellers, and independent station operators who need professional SEO research without $99+/month Ahrefs subscriptions.
 
-**Three core capabilities this skill provides:**
+**Five core capabilities this skill provides:**
 
 1. **Keyword Discovery** — Multi-source keyword hunting via DuckDuckGo through Jina Reader proxy (bypasses IP-based anti-bot), intent classification, competition estimation
 2. **SERP Competition Analysis** — Market-by-market competitive landscape, Chinese supplier share, ranking difficulty scoring via Jina-proxied search
 3. **Content Brief Generation** — EEAT-aligned outlines, H2/H3 structure, internal linking suggestions, AI detection avoidance
+4. **Google SEO Optimization** — Content quality checks (Google 32 questions), EEAT signal checklists, NavBoost engagement strategy, Core Update response plan, Hub-and-Spoke internal linking, AI content compliance
+5. **Article Writing** — Combines brief + SEO + SERP into a structured writing prompt for LLM or human writer
 
 ## Data Source Architecture
 
@@ -161,7 +163,58 @@ Classify each top-10 result by type:
 - Local brand presence
 - Backdoor keywords (easy-to-rank terms competitors missed)
 
-### Phase 4: Content Brief Generation
+### Phase 5: Google SEO Optimization
+
+Run `tools/seo-optimizer.py` to get 10-section Google SEO recommendations for any keyword:
+
+```bash
+python3 tools/seo-optimizer.py \
+  --keyword "china tarp manufacturer" \
+  --country us \
+  --output /tmp/seo-optimize.md
+```
+
+The optimizer is built from 50+ cross-referenced sources (Google official, Moz, Backlinko, First Page Sage, etc.) covering the 2026 ranking landscape. Outputs:
+
+| Section | Content |
+|---------|---------|
+| Keyword & Intent Analysis | Search intent inference, market targeting |
+| Ranking Factor Weights | 12 factors with % weight, trend direction, priority |
+| AI Content Risk Check | Google's 32 self-assessment questions (bucket 4: search-engine-first red flags) |
+| EEAT Signal Checklist | Trust-first framework (Trust → Experience → Expertise → Authority) |
+| Content Freshness Plan | Per-page-type update frequency, technical implementation |
+| NavBoost Strategy | goodClicks/badClicks/lastLongestClicks tactics |
+| Hub-and-Spoke Internal Linking | Content cluster architecture for the target keyword |
+| Core Update Response Plan | 6-week update cycle, March/May 2026 signals |
+| AI Compliance Checklist | What Google allows vs penalizes in 2026 |
+| Intent-Specific Recommendations | Tailored to B2B procurement vs wholesale vs informational intent |
+
+Includes actionable references to Google's March 2026 Core Update (80% TOP3 displacement, flow from aggregators to original sources) and May 2026 update (freshness weight 6%↑↑).
+
+### Phase 6: Article Writing (optional)
+
+After keyword discovery, SERP analysis, brief generation, and Google SEO optimization, generate a structured **writing prompt** for LLM or human writer:
+
+```bash
+python3 tools/article-writer.py \
+  --keyword "china tarp manufacturer" \
+  --country us \
+  --brief /tmp/brief.md \
+  --seo /tmp/seo-optimize.md \
+  --serp /tmp/serp.md \
+  --output /tmp/write-prompt.md
+```
+
+The writing prompt includes:
+- Role definition (expert SEO content writer / B2B export perspective)
+- Title suggestions from the content brief
+- H2 structure with writing guidance per section
+- EEAT signals to embed (from SEO optimizer)
+- Competitors to outrank (from SERP analysis)
+- AI detection avoidance rules (short paragraphs, first-person plural "we", natural rhythm)
+- Final pre-publish checklist
+
+The output is a self-contained markdown file that can be fed directly to any LLM for first-draft generation.
 
 Run `content-brief-gen.py` with target keyword + country to produce:
 
@@ -206,18 +259,28 @@ All tools are in `tools/` and use Python stdlib only (no pip dependencies).
 
 | Tool | File | What it does |
 |------|------|-------------|
-| Keyword Finder | `tools/keyword-finder.py` | Multi-source keyword discovery, dedup, intent classification |
+| Keyword Finder | `tools/keyword-finder.py` | Multi-source keyword discovery, dedup, intent classification, competition estimation |
 | SERP Analyzer | `tools/serp-analyzer.py` | Top-10 SERP analysis, competitor type classification, matrix output |
 | Content Brief Generator | `tools/content-brief-gen.py` | EEAT-aligned content brief generation from keyword + country |
+| SEO Optimizer | `tools/seo-optimizer.py` | 10-section Google SEO recommendations (EEAT, NavBoost, Core Updates, AI compliance) |
+| Article Writer | `tools/article-writer.py` | Combines brief + SEO + SERP into structured LLM writing prompt |
+| Pipeline | `pipeline.py` | One-command chains all 5 tools into a single report |
 
 **Usage:**
 
 ### One-command pipeline (recommended)
 ```bash
+# Full report: keywords + SERP + brief
 python3 pipeline.py \
   --product "heavy duty tarp" \
   --countries "us,ca,uk,au" \
   --output /tmp/full-report.md
+
+# With Google SEO optimization
+python3 pipeline.py --product "heavy duty tarp" --countries "us" --optimize --output report.md
+
+# Full pipeline: keywords + SERP + brief + SEO + article writing prompt
+python3 pipeline.py --product "china tarp" --countries "us" --optimize --write --output report.md
 ```
 
 ### Step-by-step

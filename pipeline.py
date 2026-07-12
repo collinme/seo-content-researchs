@@ -208,7 +208,16 @@ if __name__ == "__main__":
                      "--output", optimize_path]
         opt_result = run_step("seo-optimizer.py", opt_args, "Google SEO Optimization")
 
-    # ─── Step 5: Article Writing Prompt (optional) ───
+    # ─── Step 5: Competitor Research (only with --write) ───
+    gap_path = ""
+    if args.write and serp_result:
+        gap_path = os.path.join(tmpdir, "gaps.md")
+        gap_args = ["--keyword", brief_kw,
+                    "--serp", serp_path,
+                    "--output", gap_path]
+        gap_result = run_step("competitor-research.py", gap_args, "Competitor Research")
+
+    # ─── Step 6: Article Writing Prompt (only with --write) ───
     write_prompt_path = ""
     if args.write:
         write_prompt_path = os.path.join(tmpdir, "write-prompt.md")
@@ -217,6 +226,7 @@ if __name__ == "__main__":
                       "--brief", brief_path,
                       "--seo", optimize_path if optimize_path else "",
                       "--serp", serp_path if serp_result else "",
+                      "--gaps", gap_path if gap_path else "",
                       "--output", write_prompt_path]
         write_result = run_step("article-writer.py", write_args, "Article Writing Prompt")
 

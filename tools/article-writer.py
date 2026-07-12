@@ -139,8 +139,20 @@ Write approximately 1500-2500 words with the following H2 sections:
 ## Competitors to Outrank
 Your article must be more comprehensive and more trustworthy than:
 """)
-        for c in competitors:
-            lines.append(f"- {c}")
+    for c in competitors:
+        lines.append(f"- {c}")
+
+    # Add content gap analysis
+    if gaps and len(gaps) > 100:
+        lines.append(f"""
+### Content Gaps to Exploit
+
+Based on analysis of actual competitor pages (word counts, topics covered, H2 structures):
+
+{gaps}
+
+Use these gaps to differentiate your article. If competitors are all thin on shipping details, go deep on that. If they lack EEAT signals, add factory specifics.
+""")
 
     lines.append(f"""
 ## AI Detection Avoidance (CRITICAL)
@@ -171,12 +183,14 @@ if __name__ == "__main__":
     parser.add_argument("--brief", help="Path to content brief file")
     parser.add_argument("--seo", help="Path to SEO optimization file")
     parser.add_argument("--serp", help="Path to SERP analysis file (optional)")
+    parser.add_argument("--gaps", help="Path to competitor gap analysis (optional)")
     parser.add_argument("--output", required=True, help="Output writing prompt file")
     args = parser.parse_args()
 
     brief = read_file_safe(args.brief)
     seo = read_file_safe(args.seo)
     serp = read_file_safe(args.serp)
+    gaps = read_file_safe(args.gaps)
 
     if not brief:
         print("⚠️  No content brief found. Using defaults.", file=sys.stderr)
