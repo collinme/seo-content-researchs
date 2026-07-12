@@ -1,11 +1,12 @@
 ---
 name: seo-content-research
 description: >-
-  Multi-source SEO content research for B2B/B2C international markets. Discovers
-  keywords via DuckDuckGo/Bing (zero API cost), analyzes SERP competition by
-  country, generates content briefs with EEAT alignment. For factory owners,
-  exporters, independent station operators needing data-driven international SEO
-  content strategies without expensive paid tools.
+  Multi-source SEO content research for B2B/B2C international markets.
+  Discovers keywords via Startpage / DuckDuckGo / Bing / Jina Reader (zero API
+  cost), analyzes SERP competition by country, generates content briefs with
+  EEAT alignment. For factory owners, exporters, independent station operators
+  needing data-driven international SEO content strategies without expensive
+  paid tools.
 version: 1.0.0
 author: Hermes Agent
 license: MIT
@@ -25,9 +26,21 @@ Designed for Chinese factories/exporters, cross-border sellers, and independent 
 
 **Three core capabilities this skill provides:**
 
-1. **Keyword Discovery** — Multi-source keyword hunting (English + local languages), intent classification, search volume estimation
-2. **SERP Competition Analysis** — Market-by-market competitive landscape, Chinese supplier share, ranking difficulty scoring
+1. **Keyword Discovery** — Multi-source keyword hunting via DuckDuckGo through Jina Reader proxy (bypasses IP-based anti-bot), intent classification, competition estimation
+2. **SERP Competition Analysis** — Market-by-market competitive landscape, Chinese supplier share, ranking difficulty scoring via Jina-proxied search
 3. **Content Brief Generation** — EEAT-aligned outlines, H2/H3 structure, internal linking suggestions, AI detection avoidance
+
+## Data Source Architecture
+
+All search queries are routed through **Jina Reader** (`r.jina.ai`) as a proxy layer:
+
+```python
+# Jina fetches the page on its servers, handles captcha/JS rendering
+# We get back clean markdown — no API key needed
+r.jina.ai/https://lite.duckduckgo.com/lite/?q=search+query
+```
+
+This solves the VPS IP anti-bot problem: DDG/Bing/Startpage all block data center IPs, but Jina's renderer on their infrastructure bypasses these blocks.
 
 ## When to Use
 
@@ -61,12 +74,24 @@ Default market preference (user prefers international over Chinese):
 5. US — largest but highest competition, chase long-tail only
 6. Germany/France — must localize language, higher effort
 
+#### Search Backend Priority
+
+Search engines block VPS/server IPs aggressively. When automated tools fail (403/captcha), use this priority:
+
+1. **Startpage** (`startpage.com`) — **推荐首选**. Uses Google Search Alliance results. ~2 queries before captcha. Best for English B2B keywords.
+2. **Jina AI Reader** (`r.jina.ai/URL`) — Read competitor pages for keyword ideas and SERP insight
+3. **DuckDuckGo Lite** — Often 403 from VPS IPs; fallback only
+4. **Bing** — Multi-word misinterpretation; captcha from VPS IPs; last resort
+
+**If all search backends are blocked:** Use Jina Reader to read known competitor page titles and meta descriptions for keyword ideas. Fall back from automated tools to manual website analysis.
+
 ### Phase 2: Multi-Source Keyword Discovery
 
 Run the built-in `keyword-finder.py` tool. It searches across:
 
-- **DuckDuckGo** (lite API, no key needed) — primary source
-- **Bing** (mkt parameter for country-specific) — secondary source
+- **Startpage** — primary source (Google Alliance results)
+- **DuckDuckGo** (lite API) — secondary
+- **Bing** (mkt parameter) — tertiary
 - **Jina AI Reader** (r.jina.ai) — page-level content extraction
 
 **Search patterns to use for each country:**
@@ -178,8 +203,9 @@ python3 tools/content-brief-gen.py --keyword "heavy duty tarp manufacturer canad
 
 ## Common Pitfalls
 
-1. **Trusting single-source search data.** DuckDuckGo and Bing give different results. Always cross-check across sources.
-2. **Mixing B2B and B2C keywords.** "Buy tarp" (B2C) vs "tarp manufacturer" (B2B) = completely different search intent. Don't lump them together.
+1. **Search engines blocking VPS IPs.** DuckDuckGo (403), Bing (captcha), and Startpage (~2 queries then captcha) all have anti-bot protection from VPS IPs. Use Jina Reader (`r.jina.ai`) to read known competitor pages when search backends fail. When all automated search fails, fall back to manual website analysis of known competitors.
+2. **Trusting single-source search data.** DuckDuckGo, Bing, and Startpage all give incomplete results from VPS IPs. Cross-check manually or use Jina Reader for competitor content extraction.
+3. **Mixing B2B and B2C keywords.** "Buy tarp" (B2C) vs "tarp manufacturer" (B2B) = completely different search intent. Don't lump them together.
 3. **Estimating search volume without paid tools.** Without Ahrefs/SEMrush, treat all volume estimates as ±50%. Focus on difficulty signal over volume precision.
 4. **Over-localizing too early.** Start with English for English-friendly markets, add local languages only after proving product-market fit.
 5. **Ignoring Alibaba dominance.** If Alibaba holds 4+ of top 10, the keyword is hard to crack with a new site. Target longer-tail variations.

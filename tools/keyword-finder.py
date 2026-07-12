@@ -4,30 +4,25 @@ Keyword Finder — Multi-source SEO keyword discovery.
 Zero external dependencies (stdlib only).
 
 Sources:
-  - DuckDuckGo lite (no API key)
-  - Bing with market parameter
-  - Jina AI Reader for content-level extraction
+  - DuckDuckGo via Jina Reader proxy (r.jina.ai) — bypasses IP-based anti-bot
+  - Jina Reader for page content extraction
 
 Usage:
   python3 tools/keyword-finder.py --product "heavy duty tarp" --countries "us,ca,uk"
   python3 tools/keyword-finder.py --product "pvc tarpaulin" --countries "us,ca,uk,au" --output /tmp/kws.md
 """
 
-import json
 import os
 import re
 import sys
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
 from argparse import ArgumentParser
 from collections import defaultdict
 from dataclasses import dataclass, field
-from html.parser import HTMLParser
 from typing import Optional
 
-# ─── Search Patterns ─────────────────────────────────────────────────────────
 
 SEARCH_PATTERNS = [
     # B2B procurement
@@ -48,51 +43,9 @@ SEARCH_PATTERNS = [
     # Comparison
     {"template": "{product} buying guide {country}", "intent": "comparison/guide"},
     {"template": "best {product} {country}", "intent": "comparison/guide"},
-    # Local language (generic fallback — real localisation needs per-language patterns)
+    # Generic
     {"template": "{product} {country}", "intent": "generic"},
 ]
-
-COUNTRY_MKT = {
-    "us": "en-US", "ca": "en-CA", "uk": "en-GB", "au": "en-AU",
-    "nz": "en-NZ", "ie": "en-IE", "in": "en-IN",
-    "de": "de-DE", "fr": "fr-FR", "nl": "nl-NL",
-    "ae": "en-AE", "sa": "en-SA", "sg": "en-SG",
-}
-
-
-class DuckDuckGoParser(HTMLParser):
-    """Minimal parser for DuckDuckGo lite results."""
-    def __init__(self):
-        super().__init__()
-        self.results = []
-        self._in_result = False
-        self._current_url = ""
-        self._current_text = ""
-        self._capture_text = False
-
-    def handle_starttag(self, tag, attrs):
-        attrs_dict = dict(attrs)
-        if tag == "a" and "result-link" in attrs_dict.get("class", ""):
-            self._current_url = attrs_dict.get("href", "")
-            self._in_result = True
-            self._capture_text = True
-            self._current_text = ""
-        elif tag == "br" and self._in_result:
-            self._capture_text = True
-
-    def handle_data(self, data):
-        if self._capture_text:
-            self._current_text += data
-
-    def handle_endtag(self, tag):
-        if tag == "a" and self._in_result:
-            self._in_result = False
-            self._capture_text = False
-            text = re.sub(r'\s+', ' ', self._current_text).strip()
-            if text and self._current_url:
-                self.results.append({"text": text, "url": self._current_url})
-            self._current_text = ""
-            self._current_url = ""
 
 
 @dataclass
@@ -101,98 +54,130 @@ class KeywordResult:
     intent: str
     country: str
     source: str
-    competition: str = "🟡 Medium"  # default, refined later
+    competition: str = "🟡 Medium"
     related_terms: list = field(default_factory=list)
 
 
-def search_duckduckgo(query: str, retries: int = 2) -> list:
-    """Search DuckDuckGo lite. Returns list of result dicts."""
-    url = "https://lite.duckduckgo.com/lite/?q=" + urllib.parse.quote(query)
+def jina_search(query: str) -> list:
+    """
+    Search DuckDuckGo via Jina Reader proxy.
+    Jina handles page rendering on their servers, bypassing IP-based anti-bot.
+    Returns list of dicts with 'title', 'url', 'domain', 'description'.
+    """
+    # Use DDG lite as the search backend, proxied through Jina
+    ddg_url = f"https://lite.duckduckgo.com/lite/?q={urllib.parse.quote(query)}"
+    proxy_url = f"https://r.jina.ai/{urllib.parse.quote(ddg_url, safe='')}"
+
     req = urllib.request.Request(
-        url,
+        proxy_url,
         headers={
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-            "Accept": "text/html",
+            "Accept": "text/plain",
         },
     )
-    for attempt in range(retries):
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                html = resp.read().decode("utf-8", errors="replace")
-            parser = DuckDuckGoParser()
-            parser.feed(html)
-            return parser.results
-        except Exception as e:
-            if attempt < retries - 1:
-                time.sleep(1)
-                continue
-            return [{"text": f"ERROR: {e}", "url": ""}]
 
-
-def search_bing(query: str, country: str = "us") -> list:
-    """Search Bing with country-specific market parameter."""
-    mkt = COUNTRY_MKT.get(country, "en-US")
-    url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}&mkt={mkt}"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-            "Accept": "text/html",
-        },
-    )
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
-        # Extract search suggestions (Bing shows related searches at bottom)
-        results = []
-        # Simple extraction: find h2 tags with search result titles
-        for match in re.finditer(r'<h2><a[^>]*href="([^"]*)"[^>]*>(.*?)</a></h2>', html, re.DOTALL):
-            text = re.sub(r'<[^>]+>', '', match.group(2)).strip()
-            if text:
-                results.append({"text": text, "url": match.group(1)})
-        # Also extract "related searches" section
-        related = re.findall(r'<a[^>]*class="[^"]*b_rs[^"]*"[^>]*>(.*?)</a>', html)
-        for r in related:
-            text = re.sub(r'<[^>]+>', '', r).strip()
-            if text:
-                results.append({"text": text, "url": "", "related": True})
-        return results
-    except Exception:
-        return []
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            content = resp.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        return [{"url": "", "title": f"ERROR: {e}", "domain": "", "description": ""}]
+
+    results = []
+    seen_urls = set()
+
+    # Jina returns DDG results as clean markdown with format:
+    # N.[Title](URL)
+    # Description text...
+    # domain.com
+    #
+    # Skip the first "Title:" and "URL Source:" header lines
+
+    # Find all result blocks: number + title + URL in markdown link format
+    # Pattern: N.[Title text](URL) followed by optional description and domain
+    link_pattern = re.compile(
+        r'^(\d+)\.\s*\[([^\]]+)\]\(https://duckduckgo\.com/l/\?uddg=([^&\s]+)',
+        re.MULTILINE
+    )
+
+    for match in link_pattern.finditer(content):
+        num = match.group(1)
+        title = match.group(2).strip()
+        url_encoded = match.group(3)
+
+        # URL-decode the actual URL from DDG's redirect
+        try:
+            actual_url = urllib.parse.unquote(url_encoded)
+        except Exception:
+            actual_url = url_encoded
+
+        # Skip sponsored links (DDG marks them with a note)
+        if not actual_url or actual_url in seen_urls:
+            continue
+        seen_urls.add(actual_url)
+
+        domain = urllib.parse.urlparse(actual_url).netloc
+
+        # Extract description: text between this link and the next link or end
+        desc_pattern = num + r'\.\s*\[[^\]]+\]\([^)]+\)\s*\n(.*?)(?:\n\d+\.\s*\[|\Z)'
+        desc_match = re.search(desc_pattern, content, re.DOTALL)
+        description = ""
+        if desc_match:
+            raw_desc = desc_match.group(1).strip()
+            # Remove the domain line from description
+            lines = raw_desc.split('\n')
+            desc_lines = [l for l in lines if l.strip() and l.strip() != domain]
+            description = ' '.join(desc_lines[:3])[:200] if desc_lines else ""
+
+        results.append({
+            "title": title,
+            "url": actual_url,
+            "domain": domain,
+            "description": description,
+        })
+
+    # If no results matched via DDG redirect, try direct URL extraction
+    if not results:
+        # Fallback: extract all URLs from the markdown
+        all_urls = re.findall(r'https?://[^\s)"]+', content)
+        for url in all_urls:
+            if 'duckduckgo.com' in url or 'r.jina.ai' in url:
+                continue
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+            domain = urllib.parse.urlparse(url).netloc
+            results.append({
+                "title": domain,
+                "url": url,
+                "domain": domain,
+                "description": "",
+            })
+
+    return results
 
 
 def estimate_competition(keyword: str, pattern: dict) -> str:
-    """
-    Heuristic competition estimation.
-    Longer-tail + higher specificity = lower competition.
-    """
+    """Heuristic competition estimation based on keyword specificity."""
     intent = pattern.get("intent", "")
     words = len(keyword.split())
 
-    # B2B supplier keywords tend to be less competitive than generic product terms
     if "compare" in keyword.lower() or "vs " in keyword.lower():
         return "🟢 Low"
     if "buying guide" in keyword.lower():
         return "🟢 Low"
-
     if intent in ("import/supply chain", "OEM/custom"):
         return "🟢 Low" if words > 4 else "🟡 Medium"
-
     if intent == "B2B procurement":
         return "🟡 Medium"
-
     if intent == "wholesale":
         return "🟡 Medium" if words > 3 else "🔴 High"
-
-    # Generic/broad terms are hardest
     if words <= 2:
         return "🔴 High"
-
     return "🟡 Medium"
 
 
 def discover_keywords(product: str, countries: list) -> list:
-    """Run keyword discovery across all patterns and sources for given countries."""
+    """Run keyword discovery across all patterns for given countries."""
     all_keywords: list = []
     seen = set()
 
@@ -206,57 +191,46 @@ def discover_keywords(product: str, countries: list) -> list:
                 country=country_lower.upper() if country_lower in ("us", "uk", "ae") else country_lower
             )
 
-            # DuckDuckGo
-            ddg_results = search_duckduckgo(query)
-            for r in ddg_results[:5]:  # top 5 per source
-                kw = r["text"].strip()
+            # Search via Jina proxy
+            results = jina_search(query)
+            for r in results[:5]:  # top 5 per pattern
+                if not r["url"]:
+                    continue
+
+                # Extract keyword from result title or use the query itself
+                kw = r["title"].strip()
                 kw_norm = kw.lower()
+
+                # Dedup: skip if we've seen similar content
                 if kw_norm not in seen and len(kw) > 3:
                     seen.add(kw_norm)
                     all_keywords.append(KeywordResult(
                         keyword=kw,
                         intent=pattern["intent"],
                         country=country_lower,
-                        source="DuckDuckGo",
+                        source="DDG via Jina",
                         competition=estimate_competition(kw, pattern),
                     ))
 
-            # Bing (every other pattern to avoid rate limiting)
-            if hash(query) % 3 != 0:  # simple sampling
-                bing_results = search_bing(query, country_lower)
-                for r in bing_results[:3]:
-                    kw = r["text"].strip()
-                    kw_norm = kw.lower()
-                    if kw_norm not in seen and len(kw) > 3:
-                        seen.add(kw_norm)
-                        all_keywords.append(KeywordResult(
-                            keyword=kw,
-                            intent=pattern["intent"],
-                            country=country_lower,
-                            source="Bing",
-                            competition=estimate_competition(kw, pattern),
-                        ))
-
-            # Polite delay
-            time.sleep(0.3)
+            # Polite delay to avoid rate limiting
+            time.sleep(0.8)
 
     return all_keywords
 
 
-def print_table(keywords: list, output_file: Optional[str] = None):
+def print_table(keywords: list, product: str, countries_str: str, output_file: Optional[str] = None):
     """Render keyword results as markdown table."""
     lines = []
     lines.append("# SEO Keyword Discovery Results\n")
-    lines.append(f"**Product:** {args.product}  ")
-    lines.append(f"**Countries:** {', '.join(args.countries.split(','))}  ")
+    lines.append(f"**Product:** {product}  ")
+    lines.append(f"**Countries:** {countries_str}  ")
     lines.append(f"**Total keywords found:** {len(keywords)}\n")
 
-    # Group by country
     by_country = defaultdict(list)
     for kw in keywords:
         by_country[kw.country].append(kw)
 
-    for country in by_country:
+    for country in sorted(by_country.keys()):
         lines.append(f"## {country.upper()} — Keywords\n")
         lines.append("| # | Keyword | Intent | Competition | Source |")
         lines.append("|---|---------|--------|:-----------:|:------:|")
@@ -264,11 +238,10 @@ def print_table(keywords: list, output_file: Optional[str] = None):
             lines.append(f"| {i} | {kw.keyword} | {kw.intent} | {kw.competition} | {kw.source} |")
         lines.append("")
 
-    # Summary
     lines.append("## Summary\n")
     lines.append("| Country | Count | Low Comp | Med Comp | High Comp |")
     lines.append("|---------|:-----:|:--------:|:--------:|:---------:|")
-    for country in by_country:
+    for country in sorted(by_country.keys()):
         kws = by_country[country]
         low = sum(1 for k in kws if "Low" in k.competition)
         med = sum(1 for k in kws if "Medium" in k.competition)
@@ -287,9 +260,9 @@ def print_table(keywords: list, output_file: Optional[str] = None):
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser(description="Multi-source SEO keyword discovery")
+    parser = ArgumentParser(description="Multi-source SEO keyword discovery (Jina proxy)")
     parser.add_argument("--product", required=True, help="Product name (e.g. 'heavy duty tarp')")
-    parser.add_argument("--countries", default="us", help="Comma-separated country codes (e.g. 'us,ca,uk,au')")
+    parser.add_argument("--countries", default="us", help="Comma-separated country codes")
     parser.add_argument("--output", help="Output file path (default: stdout)")
     args = parser.parse_args()
 
@@ -300,15 +273,15 @@ if __name__ == "__main__":
 
     print(f"🔄 Discovering keywords for: {args.product}", file=sys.stderr)
     print(f"   Target markets: {', '.join(countries)}", file=sys.stderr)
+    print(f"   Source: DuckDuckGo (via Jina Reader proxy, no API key needed)", file=sys.stderr)
     print("", file=sys.stderr)
 
     results = discover_keywords(args.product, countries)
 
     if not results:
-        print("\n⚠️  No keywords found. Possible causes:", file=sys.stderr)
-        print("   - Network/firewall blocking DuckDuckGo or Bing", file=sys.stderr)
-        print("   - Product name too narrow -- try broader terms", file=sys.stderr)
-        print("   - All sources returned errors (check terminal output above)", file=sys.stderr)
+        print("\n⚠️  No keywords found.", file=sys.stderr)
+        print("   Jina Reader returned empty results for all queries.", file=sys.stderr)
+        print("   Try: a broader product name, or check network connectivity.", file=sys.stderr)
         sys.exit(1)
 
-    print_table(results, args.output)
+    print_table(results, args.product, args.countries, args.output)
