@@ -1,13 +1,12 @@
 ---
 name: seo-content-research
 description: >-
-  Multi-source SEO content research for B2B/B2C international markets.
-  Discovers keywords via Startpage / DuckDuckGo / Bing / Jina Reader (zero API
-  cost), analyzes SERP competition by country, generates content briefs with
-  EEAT alignment. For factory owners, exporters, independent station operators
-  needing data-driven international SEO content strategies without expensive
-  paid tools.
-version: 1.0.0
+  SEO content research for B2B/B2C international markets. Discovers keywords
+  via DuckDuckGo proxied through Jina Reader (bypasses VPS IP bans, zero API
+  cost), analyzes SERP with real competitor identification, generates EEAT
+  content briefs. For factory owners and exporters needing international SEO
+  research without paid tools.
+version: 1.1.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -32,15 +31,25 @@ Designed for Chinese factories/exporters, cross-border sellers, and independent 
 
 ## Data Source Architecture
 
-All search queries are routed through **Jina Reader** (`r.jina.ai`) as a proxy layer:
+Search queries use a priority-routed dual-source approach:
+
+```
+1. Try Startpage (direct IP)         → Google-quality results, ~2 queries
+2. Try Startpage (v2raya SOCKS5)     → Different exit IP, +2 more queries
+3. Fallback: DDG via Jina Reader     → Unlimited, no captcha
+```
+
+**Startpage** uses Google Search Alliance → results ARE Google quality. IP rotation between direct and v2raya SOCKS5 proxy (`localhost:20170`) extends captcha-free queries.
+
+**Jina Reader** (`r.jina.ai`) proxies DuckDuckGo Lite on their servers. This bypasses VPS IP bans entirely:
 
 ```python
-# Jina fetches the page on its servers, handles captcha/JS rendering
-# We get back clean markdown — no API key needed
+# Jina handles rendering on their infrastructure
+# Returns clean markdown — no API key needed
 r.jina.ai/https://lite.duckduckgo.com/lite/?q=search+query
 ```
 
-This solves the VPS IP anti-bot problem: DDG/Bing/Startpage all block data center IPs, but Jina's renderer on their infrastructure bypasses these blocks.
+**Fallback chain:** Startpage (direct) → Startpage (proxy) → DDG via Jina. If all three fail, the tool reports empty results.
 
 ## When to Use
 
@@ -76,25 +85,37 @@ Default market preference (user prefers international over Chinese):
 
 #### Search Backend Priority
 
-Search engines block VPS/server IPs aggressively. When automated tools fail (403/captcha), use this priority:
+Search engines block VPS/server IPs aggressively. From data-center IPs:
 
-1. **Startpage** (`startpage.com`) — **推荐首选**. Uses Google Search Alliance results. ~2 queries before captcha. Best for English B2B keywords.
-2. **Jina AI Reader** (`r.jina.ai/URL`) — Read competitor pages for keyword ideas and SERP insight
-3. **DuckDuckGo Lite** — Often 403 from VPS IPs; fallback only
-4. **Bing** — Multi-word misinterpretation; captcha from VPS IPs; last resort
+- DuckDuckGo Lite → 403 Forbidden
+- Bing → Captcha challenge
+- Startpage → Captcha after 1-2 queries
 
-**If all search backends are blocked:** Use Jina Reader to read known competitor page titles and meta descriptions for keyword ideas. Fall back from automated tools to manual website analysis.
+**Solution: Route through Jina Reader proxy.** `r.jina.ai` fetches pages on Jina's servers, bypasses IP bans, returns clean markdown. No API key needed.
+
+Priority when searching:
+1. **Startpage (direct IP)** — Google-quality, ~2 queries before captcha
+2. **Startpage (v2raya SOCKS5 proxy)** — different exit IP, +2 more queries
+3. **DDG via Jina proxy** — most reliable from VPS, no query limit
+4. **Jina Reader** (`r.jina.ai/URL`) — read competitor pages directly
+5. **Bing** — only when `setmkt` country-specific results are essential
 
 ### Phase 2: Multi-Source Keyword Discovery
 
-Run the built-in `keyword-finder.py` tool. It searches across:
+Run `tools/keyword-finder.py` with `--clean` flag. In clean mode, the search queries themselves become the output keywords (not raw page titles), making the result directly usable as a keyword strategy table.
 
-- **Startpage** — primary source (Google Alliance results)
-- **DuckDuckGo** (lite API) — secondary
-- **Bing** (mkt parameter) — tertiary
-- **Jina AI Reader** (r.jina.ai) — page-level content extraction
+```bash
+# Clean mode (recommended) — outputs search queries as keywords
+python3 tools/keyword-finder.py \
+  --product "heavy duty tarp" \
+  --countries "us,ca,uk,au" \
+  --clean \
+  --output /tmp/kw-results.md
+```
 
-**Search patterns to use for each country:**
+Without `--clean`, the tool outputs raw SERP page titles — useful for competitor discovery but noisy for keyword strategy. Always prefer `--clean` for deliverable reports.
+
+The tool searches across DuckDuckGo proxied through Jina Reader with 12 search patterns per country:
 
 | Intent | Pattern | Example |
 |--------|---------|---------|
@@ -110,6 +131,18 @@ Run the built-in `keyword-finder.py` tool. It searches across:
 - Search intent label (B2B procurement / wholesale / OEM / application / comparison)
 - Estimated competition level (🟢 Low / 🟡 Medium / 🔴 High)
 - Source of discovery
+
+Each keyword in clean mode comes with a competition estimate derived from actual SERP composition:
+
+| SERP Signal | Competition Label |
+|-------------|:-----------------:|
+| 3+ manufacturers/factories in top 10 | 🔴 High |
+| 2+ B2B platforms (Alibaba/MIC) in top 5 | 🔴 High |
+| Only BigBox/B2C retailers (Amazon/Home Depot) | 🟢 Low (not B2B comp) |
+| Zero direct competitors | 🟢 Low |
+| Mixed (some niche sites, some comp) | 🟡 Medium |
+
+The tool also lists the top 2-3 actual competitor domains per keyword with type labels (Manufacturer / Tarp retailer / B2B platform / Wholesaler), so you can see who you'd be competing against for each term.
 
 ### Phase 3: SERP Competition Analysis
 
@@ -182,16 +215,26 @@ All tools are in `tools/` and use Python stdlib only (no pip dependencies).
 | SERP Analyzer | `tools/serp-analyzer.py` | Top-10 SERP analysis, competitor type classification, matrix output |
 | Content Brief Generator | `tools/content-brief-gen.py` | EEAT-aligned content brief generation from keyword + country |
 
-**Usage:**
+**Usage (clean mode — recommended):**
 ```bash
-# Keyword discovery
-python3 tools/keyword-finder.py --product "heavy duty tarp" --countries "us,ca,uk"
+# Discover keywords (clean mode — search queries become keywords)
+python3 tools/keyword-finder.py \
+  --product "heavy duty tarp" \
+  --countries "us,ca,uk,au" \
+  --clean \
+  --output /tmp/kw-scan.md
 
-# SERP analysis (reads keywords from file or stdin)
-python3 tools/serp-analyzer.py --keywords "pvc tarpaulin manufacturer usa" --country us
+# SERP analysis for a key term
+python3 tools/serp-analyzer.py \
+  --keyword "china tarp manufacturer" \
+  --country us \
+  --output /tmp/serp-china.md
 
-# Content brief
-python3 tools/content-brief-gen.py --keyword "heavy duty tarp manufacturer canada"
+# Content brief for top keyword
+python3 tools/content-brief-gen.py \
+  --keyword "heavy duty tarp manufacturer canada" \
+  --country ca \
+  --output /tmp/brief.md
 ```
 
 ## Templates & References
@@ -203,9 +246,10 @@ python3 tools/content-brief-gen.py --keyword "heavy duty tarp manufacturer canad
 
 ## Common Pitfalls
 
-1. **Search engines blocking VPS IPs.** DuckDuckGo (403), Bing (captcha), and Startpage (~2 queries then captcha) all have anti-bot protection from VPS IPs. Use Jina Reader (`r.jina.ai`) to read known competitor pages when search backends fail. When all automated search fails, fall back to manual website analysis of known competitors.
-2. **Trusting single-source search data.** DuckDuckGo, Bing, and Startpage all give incomplete results from VPS IPs. Cross-check manually or use Jina Reader for competitor content extraction.
-3. **Mixing B2B and B2C keywords.** "Buy tarp" (B2C) vs "tarp manufacturer" (B2B) = completely different search intent. Don't lump them together.
+1. **Startpage HTML is NOT `<a>text</a>`.** Startpage wraps result titles in `<a class="result-title result-link">` with `<h2 class="wgl-title">TITLE</h2>` inside. Parsing with a simple `href="..."` → `>text<` regex will get zero matches. Use the correct regex: `r'class="result-title result-link[^"]*"\s*href="(https?://[^"]+)".*?<h2[^>]*class="wgl-title[^"]*"[^>]*>(.*?)</h2>'`
+2. **Search engines blocking VPS IPs.** DuckDuckGo (403), Bing (captcha), and Startpage (~2 queries then captcha) all have anti-bot protection from VPS IPs. Use Jina Reader (`r.jina.ai`) fallback when Startpage fails. When all automated search fails, fall back to manual website analysis of known competitors.
+3. **Trusting single-source search data.** DuckDuckGo, Bing, and Startpage all give incomplete results from VPS IPs. Cross-check manually or use Jina Reader for competitor content extraction.
+4. **Mixing B2B and B2C keywords.** "Buy tarp" (B2C) vs "tarp manufacturer" (B2B) = completely different search intent. Don't lump them together.
 3. **Estimating search volume without paid tools.** Without Ahrefs/SEMrush, treat all volume estimates as ±50%. Focus on difficulty signal over volume precision.
 4. **Over-localizing too early.** Start with English for English-friendly markets, add local languages only after proving product-market fit.
 5. **Ignoring Alibaba dominance.** If Alibaba holds 4+ of top 10, the keyword is hard to crack with a new site. Target longer-tail variations.
@@ -231,20 +275,23 @@ python3 tools/content-brief-gen.py --keyword "heavy duty tarp manufacturer canad
 python3 tools/keyword-finder.py \
   --product "heavy duty tarp" \
   --countries "us,ca,au,uk" \
+  --clean \
   --output /tmp/kw-scan.md
 ```
 
 ### Full Market Deep Dive (15 min)
 ```bash
-# Phase 1: keywords
+# Phase 1: keywords (clean mode)
 python3 tools/keyword-finder.py \
   --product "pvc tarpaulin" \
   --countries "us,ca,uk" \
+  --clean \
   --output /tmp/kw-list.md
 
-# Phase 2: analyze top keywords
+# Phase 2: SERP analysis for top keyword
 python3 tools/serp-analyzer.py \
-  --input /tmp/kw-list.md \
+  --keyword "china tarp manufacturer" \
+  --country us \
   --output /tmp/serp-analysis.md
 
 # Phase 3: write content brief for best keyword
